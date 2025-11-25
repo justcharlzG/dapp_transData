@@ -2,159 +2,220 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Monad × Binance Wallet 一键接入</title>
-  <script src="https://unpkg.com/viem@2.x/dist/viem.js"></script>
-  <script src="https://unpkg.com/@walletconnect/modal@2.x"></script>
-  <script src="https://unpkg.com/@walletconnect/sign-client@2.x"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monad 一键接入 (Chain ID 143 修复版)</title>
+  <script src="https://unpkg.com/viem@2.x"></script>
+  <script type="module" src="https://unpkg.com/@walletconnect/modal@2"></script>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #000; color: #fff; text-align: center; padding: 40px; }
-    button { margin: 10px; padding: 14px 28px; font-size: 16px; background: #f0b90b; color: #000; border: none; border-radius: 12px; cursor: pointer; }
-    input, textarea { width: 90%; padding: 12px; margin: 10px; border-radius: 8px; border: none; }
-    .container { max-width: 420px; margin: 0 auto; }
-    .status { margin: 20px; padding: 15px; background: #1a1a1a; border-radius: 12px; }
+    body { margin:0; font-family: -apple-system,system-ui,sans-serif; background:#000; color:#fff; min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .card { background:#111; border-radius:20px; padding:30px; width:90%; max-width:420px; box-shadow:0 10px 30px rgba(0,0,0,0.8); }
+    h1 { margin:0 0 10px; font-size:24px; }
+    p { opacity:0.8; font-size:14px; }
+    button { width:100%; padding:16px; margin:12px 0; border:none; border-radius:12px; font-size:16px; font-weight:bold; cursor:pointer; transition:0.2s; }
+    .connect { background:#f0b90b; color:#000; }
+    .action { background:#333; color:#fff; }
+    .action:disabled { background:#222; opacity:0.5; }
+    input { width:100%; padding:14px; margin:10px 0; border-radius:12px; border:none; background:#222; color:#fff; box-sizing:border-box; }
+    .status { padding:15px; background:#1a1a1a; border-radius:12px; margin:15px 0; font-family:monospace; word-break:break-all; }
+    a { color:#f0b90b; }
+    .manual { background:#555; margin-top:10px; }
+    .error { background:#ff4444; color:#fff; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Monad × Binance Wallet</h1>
-    <p>专为币安 Web3 钱包用户打造的一键入口</p>
+  <div class="card">
+    <h1>Monad × Binance Wallet (143 版)</h1>
+    <p>Chain ID 143 (0x8f) - 一键切换主网。若失败，手动添加 RPC。</p>
     
-    <div class="status" id="status">未连接</div>
+    <div class="status" id="status">点击连接钱包</div>
     
-    <button id="connectBtn">连接币安钱包</button>
-    <button id="addMonadBtn" style="display:none">一键添加 Monad 主网</button>
-    <button id="switchMonadBtn" style="display:none">切换到 Monad</button>
+    <button class="connect" id="connectBtn">连接钱包（自动检测币安）</button>
     
-    <hr />
-    <h3>发送 MON 转账（原生）</h3>
-    <input type="text" id="toAddress" placeholder="接收地址 0x..." />
+    <button class="action" id="checkChainBtn" style="display:none">检查当前链</button>
+    <button class="action" id="addSwitchBtn" style="display:none">一键切换到 Monad (143)</button>
+    
+    <div id="manualSection" style="display:none">
+      <hr style="border-color:#333;margin:20px 0">
+      <h3>手动添加 Monad (若一键失败)</h3>
+      <p>复制配置到币安“添加网络”：</p>
+      <input type="text" id="rpcConfig" readonly value='{"chainId":143,"chainName":"Monad","rpcUrls":["https://rpc.monad.xyz"],"nativeCurrency":{"name":"MON","symbol":"MON","decimals":18},"blockExplorerUrls":["https://explorer.monad.xyz"]}' />
+      <button class="manual" onclick="navigator.clipboard.writeText(document.getElementById('rpcConfig').value)">复制 JSON 配置</button>
+      <p><small>币安 App > 设置 > 网络 > 添加自定义 > 粘贴并确认</small></p>
+    </div>
+    
+    <hr style="border-color:#333;margin:20px 0">
+    <h3>发送 MON 转账</h3>
+    <input type="text" id="to" placeholder="接收地址 0x..." />
     <input type="text" id="amount" placeholder="数量（如 0.01）" />
-    <button id="sendBtn" disabled>发送转账</button>
+    <button class="action" id="sendBtn" disabled>发送转账</button>
     
-    <div class="status" id="txHash"></div>
+    <div class="status" id="result"></div>
   </div>
 
   <script type="module">
+    const PROJECT_ID = "3b95c9f27c3505dee1f714d986c9f378"; // 替换成你的 WC Project ID
     const monadChain = {
-      chainId: '0x520', // 1312 in hex
-      chainName: 'Monad',
-      nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
-      rpcUrls: ['https://rpc.monad.xyz'],
-      blockExplorerUrls: ['https://explorer.monad.xyz'],
+      chainId: 143, // 正确的主网 ID！
+      chainName: "Monad",
+      nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
+      rpcUrls: ["https://rpc.monad.xyz"],
+      blockExplorerUrls: ["https://explorer.monad.xyz"],
     };
+    const MONAD_HEX = "0x8f"; // 十六进制
 
-    let account = null;
     let provider = null;
+    let account = null;
+    let client, session;
 
-    // 检测是否在币安钱包浏览器环境
-    const isBinanceWallet = () => {
-      return navigator.userAgent.includes('Binance') || 
-             (window.ethereum && window.ethereum.isBinance);
+    const status = document.getElementById("status");
+    const connectBtn = document.getElementById("connectBtn");
+    const checkChainBtn = document.getElementById("checkChainBtn");
+    const addSwitchBtn = document.getElementById("addSwitchBtn");
+    const sendBtn = document.getElementById("sendBtn");
+    const manualSection = document.getElementById("manualSection");
+    const result = document.getElementById("result");
+
+    // 检测币安环境
+    const isBinanceEnv = () => {
+      return navigator.userAgent.includes('Binance') || (window.ethereum && window.ethereum.isBinance) || window.ethereum?.isBinanceChain;
     };
-
-    // 优先使用币安注入的 provider（深链）
-    if (window.ethereum && (window.ethereum.isBinance || isBinanceWallet())) {
-      provider = window.ethereum;
-      console.log("检测到币安原生注入 provider");
-    }
-
-    const status = document.getElementById('status');
-    const connectBtn = document.getElementById('connectBtn');
-    const addMonadBtn = document.getElementById('addMonadBtn');
-    const switchMonadBtn = document.getElementById('switchMonadBtn');
-    const sendBtn = document.getElementById('sendBtn');
 
     async function connect() {
-      if (!provider) {
-        alert("请在币安 App 内打开，或使用支持 WalletConnect 的钱包");
+      if (isBinanceEnv()) {
+        // 优先用原生注入
+        if (window.ethereum) {
+          provider = window.ethereum;
+          try {
+            const accounts = await provider.request({ method: 'eth_requestAccounts' });
+            account = accounts[0];
+            status.textContent = `币安原生连接成功: ${account.slice(0,6)}...${account.slice(-4)}`;
+            connectBtn.textContent = "已连接";
+            connectBtn.disabled = true;
+            checkChainBtn.style.display = "block";
+            sendBtn.disabled = false;
+            checkCurrentChain();
+            return;
+          } catch (err) {
+            status.innerHTML = `<span class="error">原生连接失败: ${err.message}</span><br>切换到 WalletConnect...`;
+          }
+        }
+      }
+
+      // WalletConnect 兜底
+      if (!PROJECT_ID || PROJECT_ID.includes("YOUR")) {
+        alert("请去 https://cloud.walletconnect.com 注册 Project ID");
         return;
       }
 
-      try {
-        const accounts = await provider.request({ method: 'eth_requestAccounts' });
-        account = accounts[0];
-        status.textContent = `已连接: ${account.slice(0,6)}...${account.slice(-4)}`;
-        connectBtn.textContent = "已连接";
-        connectBtn.disabled = true;
-        addMonadBtn.style.display = "block";
-        switchMonadBtn.style.display = "block";
-        sendBtn.disabled = false;
+      const { SignClient } = await import("https://unpkg.com/@walletconnect/sign-client@2.x/dist/index.js");
+      client = await SignClient.init({ projectId: PROJECT_ID });
 
-        checkCurrentChain();
-      } catch (err) {
-        status.textContent = "连接拒绝或失败";
-        console.error(err);
+      const { uri, approval } = await client.connect({
+        requiredNamespaces: {
+          eip155: {
+            methods: ["eth_sendTransaction", "personal_sign", "wallet_addEthereumChain", "wallet_switchEthereumChain"],
+            chains: ["eip155:1"],
+            events: ["chainChanged"],
+          },
+        },
+      });
+
+      if (uri) {
+        const modal = new (await import("@walletconnect/modal")).WalletConnectModal();
+        modal.openModal({ uri });
+        status.textContent = "请用币安钱包扫码连接...";
       }
+
+      session = await approval();
+      account = session.namespaces.eip155.accounts[0].split(":")[2];
+      provider = { request: (req) => client.request({ topic: session.topic, chainId: `eip155:1`, request: req }) };
+
+      modal?.closeModal();
+      status.textContent = `WalletConnect 连接成功: ${account.slice(0,6)}...${account.slice(-4)}`;
+      connectBtn.textContent = "已连接";
+      connectBtn.disabled = true;
+      checkChainBtn.style.display = "block";
+      sendBtn.disabled = false;
+      checkCurrentChain();
     }
 
     async function checkCurrentChain() {
+      if (!provider) return;
       try {
         const chainId = await provider.request({ method: 'eth_chainId' });
-        if (chainId === '0x520') {
-          status.textContent += ' (已在 Monad 主网)';
-          addMonadBtn.style.display = "none";
+        const id = parseInt(chainId, 16);
+        status.textContent += ` (当前链 ID: ${id})`;
+        if (id === 143) {
+          addSwitchBtn.style.display = "none";
+          status.textContent += " - 已在 Monad 主网！";
         } else {
-          addMonadBtn.style.display = "block";
+          addSwitchBtn.style.display = "block";
         }
-      } catch (e) {}
+      } catch (e) {
+        status.textContent += " (链检测失败)";
+      }
     }
 
     async function addAndSwitchMonad() {
+      if (!provider) return alert("请先连接");
+
       try {
         // 先尝试切换
         await provider.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x520' }],
+          params: [{ chainId: MONAD_HEX }], // 0x8f
         });
-      } catch (switchError) {
-        if (switchError.code === 4902 || switchError.code === -32603) {
-          // 未添加过，自动添加
-          await provider.request({
-            method: 'wallet_addEthereumChain',
-            params: [monadChain],
-          });
+        status.textContent = "切换成功！";
+        addSwitchBtn.style.display = "none";
+      } catch (error) {
+        console.error("Switch error:", error);
+        if (error.code === 4902 || error.message.includes("Unsupported") || error.message.includes("不支持")) {
+          // 尝试添加
+          try {
+            await provider.request({
+              method: 'wallet_addEthereumChain',
+              params: [monadChain],
+            });
+            status.textContent = "添加成功！请手动切换到 Monad。";
+          } catch (addError) {
+            console.error("Add error:", addError);
+            status.innerHTML = `<span class="error">添加失败: ${addError.message || 'Unsupported chain ID'}</span><br>请用手动模式添加。`;
+            manualSection.style.display = "block";
+            addSwitchBtn.style.display = "none";
+          }
+        } else {
+          status.innerHTML = `<span class="error">切换失败: ${error.message}</span>`;
+          manualSection.style.display = "block";
         }
       }
+      checkCurrentChain();
     }
 
-    addMonadBtn.onclick = addAndSwitchMonad;
-    switchMonadBtn.onclick = () => {
-      provider.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: '0x520' }],
-      });
-    };
-
-    sendBtn.onclick = async () => {
-      const to = document.getElementById('toAddress').value.trim();
-      const amount = document.getElementById('amount').value;
-
-      if (!to || !amount || !account) return alert("请填写完整");
+    async function sendTransaction() {
+      if (!account) return alert("未连接");
+      const to = document.getElementById("to").value.trim();
+      const amount = document.getElementById("amount").value;
+      if (!to || !amount) return alert("请填写地址和数量");
 
       try {
         const txHash = await provider.request({
           method: 'eth_sendTransaction',
           params: [{
             from: account,
-            to: to,
+            to,
             value: viem.parseEther(amount).toString(16),
           }],
         });
-
-        document.getElementById('txHash').textContent = `交易已发送！Hash: ${txHash}`;
-        document.getElementById('txHash').innerHTML += `<br><a href="https://explorer.monad.xyz/tx/${txHash}" target="_blank">查看交易</a>`;
+        result.innerHTML = `转账成功！<br><a href="https://explorer.monad.xyz/tx/${txHash}" target="_blank">${txHash}</a>`;
       } catch (err) {
-        alert("转账失败：" + (err.message || err));
+        result.innerHTML = `<span class="error">转账失败: ${err.message}</span>`;
       }
-    };
+    }
 
     connectBtn.onclick = connect;
-
-    // 自动尝试连接（币安钱包常见行为）
-    if (provider && isBinanceWallet()) {
-      setTimeout(connect, 800);
-    }
+    checkChainBtn.onclick = checkCurrentChain;
+    addSwitchBtn.onclick = addAndSwitchMonad;
+    sendBtn.onclick = sendTransaction;
   </script>
 </body>
 </html>
